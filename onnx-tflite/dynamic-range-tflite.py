@@ -1,4 +1,13 @@
 import os
+import sys
+
+# ganti path projectnya
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# Masukkan root project ke sys.path paling depan
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
@@ -11,14 +20,31 @@ import seaborn as sns
 
 from config import *
 from utils.data import load_and_preprocess, split_data, create_dataloaders
-from models.base import ECGCNN
 from utils.eval import save_confusion_matrix
 from utils.train import get_general_model_size
+
+import argparse
+import importlib
 
 # --------------------
 # 0. Config
 # --------------------
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-l","--linux", action="store_true", help="Enable linux treatment")
+args = parser.parse_args()
+
+if args.linux:
+    DEVICE = CPU
+    DATA_PATH = LINUX_DATA_PATH
+    model_path = os.path.join("/home/hans/Documents/Thesis/results/2025-08-31_19-34-10/best_model.pth")
+    model_module = importlib.import_module("models.base_linux")
+else:
+    model_path = os.path.join("results\\2025-08-22_20-31-42\\best_model.pth")
+    model_module = importlib.import_module("models.base")
+
+ECGCNN = model_module.ECGCNN
+
 print("✅ CUDA available:", torch.cuda.is_available())
 if not torch.cuda.is_available():
     print("❌ GPU not available, using CPU.")
@@ -38,7 +64,7 @@ input_length = X_train.shape[1]
 # --------------------
 # 1. Load PyTorch model
 # --------------------
-model_path = os.path.join("results\\2025-08-22_20-31-42\\best_model.pth")
+
 model = ECGCNN(input_channels=1, num_classes=num_classes, input_length=input_length).to(DEVICE)
 model.load_state_dict(torch.load(model_path, map_location=DEVICE))
 model.eval()
@@ -77,6 +103,22 @@ print("✅ ONNX model checked successfully.")
 # --------------------
 tf_folder = os.path.join(RESULT_DIR, "ecgcnn_tf")
 if not os.path.exists(tf_folder):
+    # Rename node names supaya valid di TensorFlow
+    if args.linux:
+        for node in onnx_model.graph.node:
+            if not node.name:
+                node.name = "unnamed_node"
+            if node.name[0] in ["/", "_"]:
+                node.name = "n" + node.name.lstrip("/_")
+
+        for input_tensor in onnx_model.graph.input:
+            if input_tensor.name[0] in ["/", "_"]:
+                input_tensor.name = "i" + input_tensor.name.lstrip("/_")
+
+        for output_tensor in onnx_model.graph.output:
+            if output_tensor.name[0] in ["/", "_"]:
+                output_tensor.name = "o" + output_tensor.name.lstrip("/_")
+
     tf_rep = prepare(onnx_model)
     tf_rep.export_graph(tf_folder)
     print(f"✅ Converted ONNX → TensorFlow SavedModel at {tf_folder}")

@@ -92,6 +92,6 @@ class FlowerClient(fl.client.NumPyClient):
 
 if __name__ == "__main__":
     fl.client.start_numpy_client(
-        server_address=PC_HOST,
+        server_address=LINUX_HOST,
         client=FlowerClient()
     )

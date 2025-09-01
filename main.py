@@ -13,8 +13,9 @@ if not torch.cuda.is_available():
     exit()
 
 X, y, encoder = load_and_preprocess(DATA_PATH)
+print("Shape X: ", X.shape)
 X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
-print(X_train.shape)
+print("X_train shape: ", X_train.shape)
 
 save_label_distribution(y, "Label Distribution (All)", "label_all.png", encoder, RESULT_DIR)
 save_label_distribution(y_train, "Train", "label_train.png", encoder, RESULT_DIR)
