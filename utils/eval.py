@@ -1,9 +1,9 @@
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 import os
-from models.base import ECGCNN
+import importlib
 
 def save_confusion_matrix(model, loader, encoder, title, filename, device, result_dir):
     y_true, y_pred = [], []
@@ -16,17 +16,41 @@ def save_confusion_matrix(model, loader, encoder, title, filename, device, resul
             y_true.extend(y_batch.cpu().numpy())
             y_pred.extend(predicted.cpu().numpy())
 
+    # Tentukan label names
+    if isinstance(encoder, dict):  # pakai AAMI_MAP
+        idx2label = {v: k for k, v in encoder.items()}
+        classes = [f"{i} ({idx2label[i]})" for i in sorted(idx2label.keys())]
+    else:  # pakai LabelEncoder
+        classes = [f"{i} ({lab})" for i, lab in enumerate(encoder.classes_)]
+
+    # Hitung confusion matrix
     cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(6,5))
+    plt.figure(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=encoder.classes_, yticklabels=encoder.classes_)
+                xticklabels=classes, yticklabels=classes)
     plt.title(title)
     plt.xlabel("Predicted")
     plt.ylabel("True")
     plt.savefig(os.path.join(result_dir, filename))
     plt.close()
+
+    # Hitung metrik
+    acc = accuracy_score(y_true, y_pred)
+    report = classification_report(y_true, y_pred, target_names=classes, digits=4)
+
+    # Simpan ke file txt
+    with open(os.path.join(result_dir, filename.replace(".png", "_metrics.txt")), "w") as f:
+        f.write(f"Accuracy: {acc:.4f}\n\n")
+        f.write(report)
+
     
-def load_model(path, input_channels, num_classes, input_length, device):
+def load_model(path, input_channels, num_classes, input_length, device, linux=False):
+    if not linux:
+        model_module = importlib.import_module("models.base")
+    else: 
+        model_module = importlib.import_module("models.base_linux")
+        
+    ECGCNN = model_module.ECGCNN
     model = ECGCNN(input_channels, num_classes, input_length)
     model.load_state_dict(torch.load(path, map_location=device))
     model.to(device)

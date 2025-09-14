@@ -1,91 +1,164 @@
 import os
 import sys
+import csv
+import torch
+import flwr as fl
 
-# ganti path projectnya
+# --- Import utils dan config ---
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-
-# Masukkan root project ke sys.path paling depan
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
-import csv
-import flwr as fl
-import torch
+
 from utils.eval import load_model
 from utils.param import get_model_params, set_model_params
-from config import *
+from fl_config import *
 
+# --- Konstanta ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-os.makedirs(RESULT_DIR, exist_ok=True)
 HISTORY_CSV = os.path.join(RESULT_DIR, "training_history.csv")
+os.makedirs(GLOBAL_MODEL_DIR, exist_ok=True)
+os.makedirs(RESULT_DIR, exist_ok=True)
 
-# Load pretrained model
+# --- Load pretrained global model ---
 global_model = load_model(
     path=ECGCNN_MODEL_PATH,
-    input_channels=1,   # sesuaikan data
+    input_channels=1,   # sesuaikan dengan dataset
     num_classes=5,
     input_length=29,
-    device=DEVICE
+    device=DEVICE,
 )
 
-# --- Helper untuk simpan history ---
-def append_history(round_num, metrics, filename=HISTORY_CSV):
+# =============================
+# Helper Functions
+# =============================
+def append_history(round_num: int, metrics: dict, filename: str = HISTORY_CSV):
+    """Simpan hasil training ke CSV."""
     fieldnames = ["round", "num_samples", "accuracy", "loss"]
     file_exists = os.path.isfile(filename)
+
     with open(filename, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
+
         row = {"round": round_num}
         if metrics:
             row.update(metrics)
         writer.writerow(row)
 
+# =============================
+# Custom Strategy
+# =============================
 class MyStrategy(fl.server.strategy.FedAvg):
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, model, patience_rounds=10, monitor="accuracy"):
         super().__init__()
+        self.model = model
+        self.patience_rounds = patience_rounds  # berapa round tanpa improvement
+        self.monitor = monitor  # metric untuk dipantau
+        self.best_metric = -float("inf")
+        self.rounds_no_improve = 0
 
     def initialize_parameters(self, client_manager):
         print("🔹 Broadcasting pretrained model to clients")
         return fl.common.ndarrays_to_parameters(get_model_params(self.model))
 
+    @staticmethod
+    def fit_metrics_aggregation_fn(metrics):
+        metrics = [m for _, m in metrics]
+        
+        train_losses = [m["train_loss"] for m in metrics if "train_loss" in m]
+        val_losses = [m["val_loss"] for m in metrics if "val_loss" in m]
+        train_accs = [m["train_acc"] for m in metrics if "train_acc" in m]
+        val_accs = [m["val_acc"] for m in metrics if "val_acc" in m]
+
+        return {
+            "train_loss": sum(train_losses) / len(train_losses) if train_losses else None,
+            "train_acc": sum(train_accs) / len(train_accs) if train_accs else None,
+            "val_loss": sum(val_losses) / len(val_losses) if val_losses else None,
+            "val_acc": sum(val_accs) / len(val_accs) if val_accs else None,
+        }
+
+    @staticmethod
+    def evaluate_metrics_aggregation_fn(metrics):
+        metrics = [m for _, m in metrics]
+        accs = [m["test_acc"] for m in metrics]
+        losses = [m["test_loss"] for m in metrics]
+
+        return {
+            "test_acc": sum(accs) / len(accs),
+            "test_loss": sum(losses) / len(losses),
+        }
+
     def aggregate_fit(self, rnd, results, failures):
         aggregated = super().aggregate_fit(rnd, results, failures)
+        if aggregated is None:
+            return None
 
-        if aggregated is not None:
-            # --- Ambil Parameters jika tuple (parameters, metrics) ---
-            if isinstance(aggregated, tuple):
-                parameters, metrics_list = aggregated
-                # rata-rata metrics dari semua client
-                metrics = {}
-                if metrics_list:
-                    num_samples = sum([m.get("num_examples", 0) for m in metrics_list])
-                    accuracy = sum([m.get("accuracy_after", 0) * m.get("num_examples", 0) for m in metrics_list])
-                    accuracy = accuracy / num_samples if num_samples else 0.0
-                    metrics = {"num_samples": num_samples, "accuracy": accuracy, "loss": 1-accuracy}
-            else:
-                parameters = aggregated
-                metrics = None
+        if isinstance(aggregated, tuple):
+            parameters, _ = aggregated
+        else:
+            parameters = aggregated
 
-            # --- Set parameter ke model global ---
-            params_ndarrays = fl.common.parameters_to_ndarrays(parameters)
-            set_model_params(self.model, params_ndarrays)
+        metrics = self._aggregate_client_metrics(results)
 
-            # --- Simpan model global tiap round ---
-            torch.save(self.model.state_dict(), os.path.join(RESULT_DIR, f"model_global_round{rnd}.pth"))
-            print(f"💾 Global model updated and saved after round {rnd}")
+        # --- Update global model ---
+        params_ndarrays = fl.common.parameters_to_ndarrays(parameters)
+        set_model_params(self.model, params_ndarrays)
+        model_path = os.path.join(GLOBAL_MODEL_DIR, f"model_global_round{rnd}.pth")
+        torch.save(self.model.state_dict(), model_path)
+        print(f"💾 Global model updated and saved after round {rnd}")
 
-            # --- Simpan history ke CSV ---
+        # --- Simpan history ---
+        if metrics:
             append_history(rnd, metrics)
 
-            # --- Return Parameters object + metrics jika ada ---
-            return aggregated
+        # --- Early stopping round ---
+        current_metric = metrics.get(self.monitor, 0.0)
+        if current_metric > self.best_metric:
+            self.best_metric = current_metric
+            self.rounds_no_improve = 0
+        else:
+            self.rounds_no_improve += 1
+            print(f"⚠️ No improvement in {self.rounds_no_improve} round(s)")
 
-        return None
+        # if self.rounds_no_improve >= self.patience_rounds:
+        #     print(f"⏹️ Early stopping federated training at round {rnd} after {self.patience_rounds} rounds without improvement")
+        #     # raise exception untuk stop server
+        #     raise KeyboardInterrupt("Early stopping triggered")
 
+        return aggregated
+    
+    @staticmethod
+    def _aggregate_client_metrics(results):
+        """Hitung rata-rata accuracy & loss dari semua client."""
+        if not results:
+            return None
+
+        total_samples = 0
+        weighted_acc = 0.0
+
+        for _, fit_res in results:  # hasil dari client
+            num_examples = getattr(fit_res, "num_examples", 0)
+            acc = fit_res.metrics.get("final_val_acc", 0.0)
+
+            total_samples += num_examples
+            weighted_acc += acc * num_examples
+
+        accuracy = weighted_acc / total_samples if total_samples else 0.0
+
+        return {
+            "num_samples": total_samples,
+            "accuracy": accuracy,
+            "loss": 1 - accuracy,
+        }
+
+
+# =============================
+# Main Entry Point
+# =============================
 if __name__ == "__main__":
     fl.server.start_server(
         server_address="0.0.0.0:8080",
         strategy=MyStrategy(global_model),
-        config=fl.server.ServerConfig(num_rounds=3),
+        config=fl.server.ServerConfig(num_rounds=ROUNDS),
     )

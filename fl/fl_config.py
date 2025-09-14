@@ -2,8 +2,23 @@ import torch
 from datetime import datetime
 import os
 
-# Paths
-# DATA_PATH = '../../dataset creation/dataset code/feature_store/combined_features_aami_clean_scaled.csv_balanced.csv'
+RESULT_DIR = os.path.join("fl","results", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+GLOBAL_MODEL_DIR = os.path.join(RESULT_DIR,"global_model")
+CLIENT_MODEL_DIR = os.path.join(RESULT_DIR,"clients")
+LOG_PATH = os.path.join(RESULT_DIR, "log.csv")
+
+
+# model config
+EPOCH=100
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+LR = 0.001
+MODEL_CLASS = 5
+
+# FL config
+ROUNDS = 200
+
+
+
 DATA_PATH = './datasets/gan.csv'
 MITDB_PATH = "./datasets/mitdb.csv"
 SVDB_PATH = "./datasets/svdb.csv"
@@ -14,30 +29,14 @@ RAW_SVDB = "D:/S2/code/dataset creation/dataset code/feature_store/20250716_feat
 LINUX_DATA_PATH = '/home/hans/Documents/combined_features_aami_clean_scaled.csv_balanced.csv'
 LINUX_MITDB_PATH = '/home/hans/Documents/combined_features_aami_clean_scaled_cleaned.csv'
 LINUX_SVDB_PATH = ""
+LINUX_RAW_SVDB = ""
+LINUX_RAW_MITDB = ""
 
-ECGCNN_MODEL_PATH = ".\\result_models\\ECGCNN.pth"
+ECGCNN_MODEL_PATH = ".\\result_models\\ECGCNN_base_mapped.pth"
+# ECGCNN_MODEL_PATH = ".\\result_models\\ECGCNN.pth"
 ECGCNN_ADAPTIVE_POOL_MODEL_PATH = ".\\result_models\\ECGCNN-AdaptivePool.pth"
 ECGCNN_DYNAMIC_RANGE_QUANTIZATION_MODEL_PATH = ".\\result_models\\ECGCNN-DynamicRangeQuantization.pth"
 
 LINUX_ECGCNN_MODEL_PATH = "./result_models/ECGCNN.pth"
 LINUX_ECGCNN_ADAPTIVE_POOL_MODEL_PATH = "./result_models/ECGCNN-AdaptivePool.pth"
 LINUX_ECGCNN_DYNAMIC_RANGE_QUANTIZATION_MODEL_PATH = "./result_models/ECGCNN-DynamicRangeQuantization.pth"
-
-RESULT_DIR = os.path.join("results", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-LOG_PATH = os.path.join(RESULT_DIR, "log.csv")
-
-# Training parameters
-BATCH_SIZE = 32
-LR = 0.001
-EPOCHS = 200
-PATIENCE = 10
-
-# Device
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CPU = torch.device("cpu")
-# Create result dir if needed
-os.makedirs(RESULT_DIR, exist_ok=True)
-
-#host
-LINUX_HOST = '192.168.100.97:8080'
-PC_HOST = 'localhost:8080'

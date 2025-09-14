@@ -1,2 +1,7 @@
 tf310_env/
 results/
+fl_client_results/
+datasets/
+clients/
+fl_client_results/
+fl_result_server/

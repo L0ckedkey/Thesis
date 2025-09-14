@@ -51,7 +51,8 @@ with open(log_path, mode="w", newline="") as f:
 
 # ===== 1. Load data =====
 # path = "D:/S2/code/dataset creation/dataset code/feature_store/20250716_features_aami.csv"
-path = '../../dataset creation/dataset code/feature_store/combined_features_aami_clean_scaled.csv_balanced.csv'
+# path = '../../dataset creation/dataset code/feature_store/combined_features_aami_clean_scaled.csv_balanced.csv'
+path = './datasets/combined_features_aami_clean_scaled_cleaned.csv'
 df = pd.read_csv(path,low_memory=False)
 
 # ===== 2. Drop kolom yang tidak dibutuhkan =====
